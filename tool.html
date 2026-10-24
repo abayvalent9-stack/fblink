@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fblink — bungkus foto jadi link</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 560px; margin: 24px auto; padding: 0 16px; color: #1c1e21; }
+  h1 { font-size: 22px; } label { display: block; font-weight: 600; margin: 16px 0 6px; }
+  input[type=text], input[type=password] { width: 100%; padding: 10px; font-size: 16px; border: 1px solid #ccd0d5; border-radius: 8px; box-sizing: border-box; }
+  input[type=file] { font-size: 15px; }
+  button { background: #1a7f37; color: #fff; border: 0; border-radius: 8px; padding: 13px 22px; font-size: 17px; font-weight: 700; width: 100%; margin-top: 22px; cursor: pointer; }
+  button:disabled { background: #9db8a4; }
+  #status { margin-top: 16px; white-space: pre-wrap; font-size: 15px; }
+  #result { display: none; margin-top: 14px; background: #e7f6ec; border: 1px solid #1a7f37; border-radius: 8px; padding: 12px; word-break: break-all; }
+  .hint { color: #606770; font-size: 13px; margin-top: 4px; }
+  img#preview { max-width: 100%; margin-top: 10px; border-radius: 8px; display: none; }
+</style>
+</head>
+<body>
+<h1>🖼️ fblink — bungkus foto jadi link</h1>
+<p>Isi foto + judul + link Shopee, klik TERBITKAN. URL hasilnya ditempel ke Facebook: klik foto = langsung ke Shopee.</p>
+
+<label>GitHub token (diisi sekali, tersimpan di browser ini saja)</label>
+<input type="password" id="token" placeholder="ghp_... / github_pat_...">
+<div class="hint">Token akses repo <b>abayvalent9-stack/fblink</b>. Jangan bagikan ke siapa pun.</div>
+
+<label>Foto</label>
+<input type="file" id="image" accept="image/*">
+<img id="preview" alt="">
+<div class="hint">Maks ±950 KB.</div>
+
+<label>Judul postingan</label>
+<input type="text" id="title" placeholder="mis. MAKEUP BAGUSS under 50rb an">
+
+<label>Link Shopee (tujuan)</label>
+<input type="text" id="target" placeholder="https://s.shopee.co.id/xxxx">
+
+<label>Slug / nama pendek URL (boleh kosong = otomatis)</label>
+<input type="text" id="slug" placeholder="makeup-pelajar">
+
+<label>Deskripsi kecil (opsional)</label>
+<input type="text" id="desc" placeholder="">
+
+<button id="publish">TERBITKAN</button>
+<div id="status"></div>
+<div id="result"></div>
+
+<script>
+const OWNER = "abayvalent9-stack", REPO = "fblink", BRANCH = "main";
+const BASE = "https://abayvalent9-stack.github.io/fblink";
+const $ = id => document.getElementById(id);
+const MAXBYTES = 950000;
+
+$("token").value = localStorage.getItem("fblink_token") || "";
+$("token").addEventListener("change", () => localStorage.setItem("fblink_token", $("token").value.trim()));
+$("image").addEventListener("change", () => {
+  const f = $("image").files[0];
+  if (f) { $("preview").src = URL.createObjectURL(f); $("preview").style.display = "block"; }
+});
+
+const esc = s => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const slugify = s => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "post";
+
+function buildPage(title, desc, target, slug, imgName) {
+  const pageUrl = BASE + "/p/" + slug + "/", imgUrl = pageUrl + imgName;
+  return "<!DOCTYPE html>\n<html lang=\"id\">\n<head>\n<meta charset=\"utf-8\">\n" +
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n" +
+    "<title>" + esc(title) + "</title>\n" +
+    "<meta property=\"og:type\" content=\"website\">\n" +
+    "<meta property=\"og:title\" content=\"" + esc(title) + "\">\n" +
+    "<meta property=\"og:description\" content=\"" + esc(desc) + "\">\n" +
+    "<meta property=\"og:image\" content=\"" + imgUrl + "\">\n" +
+    "<meta property=\"og:url\" content=\"" + pageUrl + "\">\n" +
+    "<meta name=\"twitter:card\" content=\"summary_large_image\">\n" +
+    "<meta http-equiv=\"refresh\" content=\"0; url=" + esc(target) + "\">\n" +
+    "<scr" + "ipt>window.location.replace(" + JSON.stringify(target) + ");</scr" + "ipt>\n</head>\n" +
+    "<body style=\"font-family:sans-serif;text-align:center;padding:40px 20px\">\n" +
+    "<img src=\"" + imgUrl + "\" alt=\"\" style=\"max-width:100%;height:auto\">\n" +
+    "<p>" + esc(desc) + "</p>\n<p><a href=\"" + esc(target) + "\">Klik di sini kalau tidak otomatis pindah</a></p>\n</body>\n</html>";
+}
+
+async function api(method, path, payload) {
+  const r = await fetch("https://api.github.com" + path, {
+    method, headers: {
+      "Authorization": "Bearer " + $("token").value.trim(),
+      "Accept": "application/vnd.github+json", "Content-Type": "application/json" },
+    body: payload ? JSON.stringify(payload) : undefined });
+  let data = {}; try { data = await r.json(); } catch (e) {}
+  return { status: r.status, data };
+}
+
+async function putFile(path, base64Content, message) {
+  const got = await api("GET", "/repos/" + OWNER + "/" + REPO + "/contents/" + path + "?ref=" + BRANCH);
+  const payload = { message, branch: BRANCH, content: base64Content };
+  if (got.status === 200 && got.data.sha) payload.sha = got.data.sha;
+  const res = await api("PUT", "/repos/" + OWNER + "/" + REPO + "/contents/" + path, payload);
+  if (res.status !== 200 && res.status !== 201) throw new Error("Gagal menulis " + path + " (HTTP " + res.status + "). Cek token kamu.");
+}
+
+function toB64(buf) {
+  const bytes = new Uint8Array(buf); let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+}
+
+$("publish").addEventListener("click", async () => {
+  const st = $("status"), rs = $("result");
+  rs.style.display = "none"; st.textContent = "";
+  try {
+    if (!$("token").value.trim()) throw new Error("Isi GitHub token dulu (sekali saja).");
+    localStorage.setItem("fblink_token", $("token").value.trim());
+    const file = $("image").files[0];
+    if (!file) throw new Error("Pilih foto dulu.");
+    if (file.size > MAXBYTES) throw new Error("Foto " + Math.round(file.size / 1024) + " KB — terlalu besar (maks ±950 KB).");
+    const title = $("title").value.trim(), target = $("target").value.trim();
+    if (!title || !target.startsWith("http")) throw new Error("Judul wajib diisi dan link harus diawali http.");
+    const slug = slugify($("slug").value.trim() || title);
+    const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace("jpeg", "jpg");
+    const imgName = "img." + ext;
+    $("publish").disabled = true; st.textContent = "Menerbitkan…";
+    const buf = await file.arrayBuffer();
+    const page = buildPage(title, $("desc").value.trim(), target, slug, imgName);
+    await putFile("p/" + slug + "/index.html", btoa(unescape(encodeURIComponent(page))), "fblink: " + slug);
+    await putFile("p/" + slug + "/" + imgName, toB64(buf), "fblink: " + slug + " image");
+    const url = BASE + "/p/" + slug + "/";
+    st.textContent = "BERHASIL ✅ Tunggu ±1 menit (GitHub memproses), lalu tempel URL ini ke Facebook:";
+    rs.innerHTML = "<b>" + url + "</b><br><br><button style='margin:0;padding:9px' onclick='navigator.clipboard.writeText(\"" + url + "\");this.textContent=\"TERSALIN ✓\"'>Salin URL</button> <a href='" + url + "' target='_blank'>Buka halaman</a>";
+    rs.style.display = "block";
+  } catch (e) { st.textContent = "⚠️ " + e.message; }
+  $("publish").disabled = false;
+});
+</script>
+</body>
+</html>
