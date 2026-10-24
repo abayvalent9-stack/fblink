@@ -85,11 +85,10 @@ function buildPage(title, desc, target, slug, imgName) {
     "<meta property=\"og:image\" content=\"" + imgUrl + "\">\n" +
     "<meta property=\"og:url\" content=\"" + pageUrl + "\">\n" +
     "<meta name=\"twitter:card\" content=\"summary_large_image\">\n" +
-    "<meta http-equiv=\"refresh\" content=\"0; url=" + esc(target) + "\">\n" +
-    "<scr" + "ipt>window.location.replace(" + JSON.stringify(target) + ");</scr" + "ipt>\n</head>\n" +
+    "<scr" + "ipt>setTimeout(function(){window.location.replace(" + JSON.stringify(target) + ");},900);</scr" + "ipt>\n</head>\n" +
     "<body style=\"font-family:sans-serif;text-align:center;padding:40px 20px\">\n" +
     "<img src=\"" + imgUrl + "\" alt=\"\" style=\"max-width:100%;height:auto\">\n" +
-    "<p>" + esc(desc) + "</p>\n<p><a href=\"" + esc(target) + "\">Klik di sini kalau tidak otomatis pindah</a></p>\n</body>\n</html>";
+    "<p>" + esc(desc) + "</p>\n<p>Sedang membuka Shopee…</p>\n<p><a href=\"" + esc(target) + "\" style=\"display:inline-block;background:#ee4d2d;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:bold\">Buka Shopee</a></p>\n</body>\n</html>";
 }
 
 async function api(method, path, payload) {
