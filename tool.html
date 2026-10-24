@@ -74,15 +74,17 @@ const esc = s => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(
 const slugify = s => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "post";
 const titleFromName = name => name.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").trim();
 
-function buildPage(title, desc, target, slug, imgName) {
-  const pageUrl = BASE + "/p/" + slug + "/", imgUrl = pageUrl + imgName;
+function buildPage(title, desc, target, slug, imgName, ogName) {
+  const pageUrl = BASE + "/p/" + slug + "/", imgUrl = pageUrl + imgName, ogUrl = pageUrl + ogName;
   return "<!DOCTYPE html>\n<html lang=\"id\">\n<head>\n<meta charset=\"utf-8\">\n" +
     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n" +
     "<title>" + esc(title) + "</title>\n" +
     "<meta property=\"og:type\" content=\"website\">\n" +
     "<meta property=\"og:title\" content=\"" + esc(title) + "\">\n" +
     "<meta property=\"og:description\" content=\"" + esc(desc) + "\">\n" +
-    "<meta property=\"og:image\" content=\"" + imgUrl + "\">\n" +
+    "<meta property=\"og:image\" content=\"" + ogUrl + "\">\n" +
+    "<meta property=\"og:image:width\" content=\"1200\">\n" +
+    "<meta property=\"og:image:height\" content=\"630\">\n" +
     "<meta property=\"og:url\" content=\"" + pageUrl + "\">\n" +
     "<meta name=\"twitter:card\" content=\"summary_large_image\">\n" +
     "<scr" + "ipt>setTimeout(function(){window.location.replace(" + JSON.stringify(target) + ");},900);</scr" + "ipt>\n</head>\n" +
@@ -117,6 +119,37 @@ function toB64(buf) {
   return btoa(bin);
 }
 
+// Normalisasi foto jadi 1200x630 (ukuran rekomendasi FB) dengan latar blur,
+// supaya preview FB selalu dapat gambar berasio landscape apa pun bentuk foto aslinya.
+function makeOg(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const W = 1200, H = 630;
+      const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+      const ctx = cv.getContext("2d");
+      const cover = Math.max(W / img.width, H / img.height);
+      const bw = img.width * cover, bh = img.height * cover;
+      try { ctx.filter = "blur(24px) brightness(0.9)"; } catch (e) {}
+      ctx.drawImage(img, (W - bw) / 2, (H - bh) / 2, bw, bh);
+      try { ctx.filter = "none"; } catch (e) {}
+      const cont = Math.min(W / img.width, H / img.height);
+      const fw = img.width * cont, fh = img.height * cont;
+      ctx.drawImage(img, (W - fw) / 2, (H - fh) / 2, fw, fh);
+      URL.revokeObjectURL(url);
+      cv.toBlob(b => {
+        const rd = new FileReader();
+        rd.onload = () => resolve(toB64(rd.result));
+        rd.onerror = () => reject(new Error("gagal memproses foto"));
+        rd.readAsArrayBuffer(b);
+      }, "image/jpeg", 0.88);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("foto tidak bisa dibaca")); };
+    img.src = url;
+  });
+}
+
 $("publish").addEventListener("click", async () => {
   const st = $("status"), rs = $("result");
   rs.style.display = "none"; rs.innerHTML = ""; st.textContent = "";
@@ -146,26 +179,33 @@ $("publish").addEventListener("click", async () => {
       const ext = (f.name.split(".").pop() || "jpg").toLowerCase().replace("jpeg", "jpg");
       const imgName = "img." + ext;
       const buf = await f.arrayBuffer();
-      const page = buildPage(title, desc, target, slug, imgName);
-      await putFile("p/" + slug + "/index.html", btoa(unescape(encodeURIComponent(page))), "fblink: " + slug);
+      // Urutan terbit: foto dulu, baru halaman — supaya FB tidak pernah
+      // menemukan halaman yang fotonya belum ada.
+      let ogName = imgName, ogB64 = null;
+      try { ogB64 = await makeOg(f); ogName = "og.jpg"; } catch (e) { /* pakai foto asli sebagai og */ }
       await putFile("p/" + slug + "/" + imgName, toB64(buf), "fblink: " + slug + " image");
-      urls.push(BASE + "/p/" + slug + "/");
+      if (ogB64) await putFile("p/" + slug + "/og.jpg", ogB64, "fblink: " + slug + " og");
+      const page = buildPage(title, desc, target, slug, imgName, ogName);
+      await putFile("p/" + slug + "/index.html", btoa(unescape(encodeURIComponent(page))), "fblink: " + slug);
+      urls.push({ page: BASE + "/p/" + slug + "/", og: BASE + "/p/" + slug + "/" + ogName });
     }
-    st.textContent = "Menunggu halaman aktif di GitHub (±1 menit)…";
-    let live = false;
-    for (let i = 0; i < 12 && !live; i++) {
-      try { const r = await fetch(urls[0], { cache: "no-store" }); if (r.status === 200) live = true; }
-      catch (e) {}
-      if (!live) await new Promise(r => setTimeout(r, 15000));
+    st.textContent = "Menunggu halaman dan foto aktif di GitHub (±1 menit)…";
+    const last = urls[urls.length - 1];
+    let livePage = false, liveOg = false;
+    for (let i = 0; i < 12 && !(livePage && liveOg); i++) {
+      try { const r = await fetch(last.page, { cache: "no-store" }); if (r.status === 200) livePage = true; } catch (e) {}
+      try { const r = await fetch(last.og, { cache: "no-store" }); if (r.status === 200) liveOg = true; } catch (e) {}
+      if (!(livePage && liveOg)) await new Promise(r => setTimeout(r, 15000));
     }
+    const live = livePage && liveOg;
     st.textContent = live
-      ? "BERHASIL ✅ " + urls.length + " halaman terbit dan SUDAH AKTIF. Tempel ke Facebook sekarang:"
-      : "BERHASIL ✅ " + urls.length + " halaman terbit (halaman mungkin belum aktif — tunggu 1 menit lagi sebelum ditempel ke Facebook):";
-    rs.innerHTML = urls.map(u => "<div>" + u + "</div>").join("") +
+      ? "BERHASIL ✅ " + urls.length + " halaman terbit, halaman dan foto SUDAH AKTIF. Tempel ke Facebook sekarang:"
+      : "BERHASIL ✅ " + urls.length + " halaman terbit (halaman/foto mungkin belum aktif — tunggu 1 menit lagi sebelum ditempel ke Facebook):";
+    rs.innerHTML = urls.map(u => "<div>" + u.page + "</div>").join("") +
       "<button class='ghost' id='copyall'>Salin Semua URL</button>";
     rs.style.display = "block";
     document.getElementById("copyall").addEventListener("click", ev => {
-      navigator.clipboard.writeText(urls.join("\n"));
+      navigator.clipboard.writeText(urls.map(u => u.page).join("\n"));
       ev.target.textContent = "TERSALIN ✓";
     });
   } catch (e) { st.textContent = "⚠️ " + e.message; }
