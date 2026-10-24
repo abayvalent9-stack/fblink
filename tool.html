@@ -151,7 +151,16 @@ $("publish").addEventListener("click", async () => {
       await putFile("p/" + slug + "/" + imgName, toB64(buf), "fblink: " + slug + " image");
       urls.push(BASE + "/p/" + slug + "/");
     }
-    st.textContent = "BERHASIL ✅ " + urls.length + " halaman terbit. Tunggu ±1 menit (GitHub memproses), lalu tempel ke Facebook:";
+    st.textContent = "Menunggu halaman aktif di GitHub (±1 menit)…";
+    let live = false;
+    for (let i = 0; i < 12 && !live; i++) {
+      try { const r = await fetch(urls[0], { cache: "no-store" }); if (r.status === 200) live = true; }
+      catch (e) {}
+      if (!live) await new Promise(r => setTimeout(r, 15000));
+    }
+    st.textContent = live
+      ? "BERHASIL ✅ " + urls.length + " halaman terbit dan SUDAH AKTIF. Tempel ke Facebook sekarang:"
+      : "BERHASIL ✅ " + urls.length + " halaman terbit (halaman mungkin belum aktif — tunggu 1 menit lagi sebelum ditempel ke Facebook):";
     rs.innerHTML = urls.map(u => "<div>" + u + "</div>").join("") +
       "<button class='ghost' id='copyall'>Salin Semua URL</button>";
     rs.style.display = "block";
